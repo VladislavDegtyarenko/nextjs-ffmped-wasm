@@ -42,7 +42,6 @@ export default function Home() {
     );
     await ffmpeg.exec(["-i", "input.avi", "output.mp4"]);
     const data = (await ffmpeg.readFile("output.mp4")) as any;
-    console.log("data: ", data);
     if (videoRef.current)
       videoRef.current.src = URL.createObjectURL(
         new Blob([data.buffer], { type: "video/mp4" })
