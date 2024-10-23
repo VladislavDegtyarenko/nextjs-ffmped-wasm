@@ -3,53 +3,92 @@
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile, toBlobURL } from "@ffmpeg/util";
 import { useRef, useState } from "react";
+import useLoadFfmpeg from "./hooks/useLoadFfmpeg";
 
 export default function Home() {
-  const [loaded, setLoaded] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
   const ffmpegRef = useRef(new FFmpeg());
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const messageRef = useRef<HTMLParagraphElement | null>(null);
 
-  const load = async () => {
-    setIsLoading(true);
-    const baseURL = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd";
-    const ffmpeg = ffmpegRef.current;
-    ffmpeg.on("log", ({ message }) => {
-      if (messageRef.current) messageRef.current.innerHTML = message;
+  const { isLoading, loaded, load } = useLoadFfmpeg({ ffmpegRef, messageRef });
+
+  const [file, setFile] = useState<File | null>(null);
+  const [compressedFile, setCompressedFile] = useState<string | null>(null);
+  console.log("compressedFile: ", compressedFile);
+  const [bitrate, setBitrate] = useState(128);
+  console.log("bitrate: ", bitrate);
+
+  function fileToUint8Array(file: File): Promise<Uint8Array> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+
+      reader.onload = () => {
+        const binaryString = reader.result as string;
+        const len = binaryString.length;
+        const uint8Array = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          uint8Array[i] = binaryString.charCodeAt(i);
+        }
+        resolve(uint8Array);
+      };
+
+      reader.onerror = () => {
+        reject(new Error("Error reading file"));
+      };
+
+      reader.readAsBinaryString(file);
+      // reader.readAsArrayBuffer(file);
     });
-    // toBlobURL is used to bypass CORS issue, urls with the same
-    // domain can be used directly.
-    await ffmpeg.load({
-      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
-      wasmURL: await toBlobURL(
-        `${baseURL}/ffmpeg-core.wasm`,
-        "application/wasm"
-      ),
-    });
-    setLoaded(true);
-    setIsLoading(false);
-  };
+  }
 
   const transcode = async () => {
     const ffmpeg = ffmpegRef.current;
-    // u can use 'https://ffmpegwasm.netlify.app/video/video-15s.avi' to download the video to public folder for testing
-    await ffmpeg.writeFile(
-      "input.avi",
-      await fetchFile(
-        "https://raw.githubusercontent.com/ffmpegwasm/testdata/master/video-15s.avi"
-      )
-    );
-    await ffmpeg.exec(["-i", "input.avi", "output.mp4"]);
+
+    if (!file) {
+      console.warn("No file attached");
+      return;
+    }
+
+    const fileData = await fileToUint8Array(file);
+    console.log("fileData: ", fileData);
+    await ffmpeg.writeFile("input.avi", fileData);
+
+    await ffmpeg.exec(["-i", "input.avi", "-b:v", "64k", "output.mp4"]);
     const data = (await ffmpeg.readFile("output.mp4")) as any;
-    if (videoRef.current)
-      videoRef.current.src = URL.createObjectURL(
+    if (videoRef.current) {
+      const url = URL.createObjectURL(
         new Blob([data.buffer], { type: "video/mp4" })
       );
+      console.log("url: ", url);
+      videoRef.current.src = url;
+      setCompressedFile(url);
+    }
   };
 
   return loaded ? (
     <div className="fixed top-[50%] left-[50%] translate-x-[-50%] translate-y-[-50%]">
+      <form>
+        <input
+          type="file"
+          accept="video/mp4"
+          onChange={(e) => {
+            const fileInput = e.target as HTMLInputElement;
+            const videoFile = fileInput.files?.[0];
+            console.log("videoFile: ", videoFile);
+            if (videoFile) {
+              setFile(videoFile);
+            }
+          }}
+        />
+        <select
+          onChange={(e) => setBitrate(parseInt(e.target.value))}
+          defaultValue={String(bitrate)}
+        >
+          <option value="64">64</option>
+          <option value="128">128</option>
+          <option value="256">256</option>
+        </select>
+      </form>
       <video ref={videoRef} controls></video>
       <br />
       <button
@@ -59,6 +98,11 @@ export default function Home() {
         Transcode avi to mp4
       </button>
       <p ref={messageRef}></p>
+      {compressedFile && (
+        <a href={compressedFile} download="compressed.mp4">
+          DOWNLOAD
+        </a>
+      )}
     </div>
   ) : (
     <button
